@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>媛婷雪球大冒險 - 史詩完整版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #020617; user-select: none; margin: 0; overflow: hidden; touch-action: none; }
+        .arcade-font { font-family: 'Press Start 2P', cursive; }
+        .moba-btn { background: radial-gradient(circle, #3b82f6 0%, #1d4ed8 80%); border: 2px solid #60a5fa; box-shadow: 0 0 10px rgba(59,130,246,0.8); }
+        .moba-btn:active { transform: scale(0.95); filter: brightness(1.2); }
+        .glass-panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); border: 1px solid rgba(56, 189, 248, 0.3); }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 2px; }
+        .chat-container { height: calc(100vh - 120px); }
+        /* 搖桿樣式 */
+        .joystick-zone { position: absolute; bottom: 30px; left: 30px; width: 150px; height: 150px; background: rgba(255,255,255,0.1); border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); z-index: 50; }
+        .joystick-knob { position: absolute; width: 60px; height: 60px; background: rgba(59,130,246,0.8); border-radius: 50%; top: 45px; left: 45px; box-shadow: 0 0 10px #60a5fa; pointer-events: none; transition: transform 0.05s; }
+    </style>
+</head>
+<body class="text-slate-100 h-screen w-screen relative">
+    <div id="root" class="w-full h-full"></div>
+
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // ======================= 工具與初始設定 =======================
+        const generateId = () => "id_" + Math.random().toString(36).substr(2, 9);
+        const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+        const randFloat = (min, max) => (Math.random() * (max - min) + min).toFixed(2);
+
+        const VIP_LEVELS = [
+            { req: 0, name: 'VIP0' }, { req: 30, name: 'VIP1' }, { req: 300, name: 'VIP2' },
+            { req: 500, name: 'VIP3' }, { req: 1000, name: 'VIP4' }, { req: 2000, name: 'VIP5' },
+            { req: 6000, name: 'VIP6' }, { req: 7000, name: 'VIP7' }, { req: 10000, name: 'VIP8' },
+            { req: 30000, name: 'VIP9' }, { req: 60000, name: 'VIP10' }, { req: 300000, name: 'SVIP' }
+        ];
+        const getVip = (twd) => VIP_LEVELS.slice().reverse().find(v => twd >= v.req)?.name || 'VIP0';
+
+        const AI_BOTS = ["雪狐", "企鵝教練", "北極熊", "雪地精靈", "冰霜法師"];
+        const INITIAL_SHOP = [
+            { id: "s1", name: "隨機裝備箱", price: 100, desc: "隨機開出一件基礎裝備(披風/頭盔/鎧甲/手套/鞋子)", type: "box" },
+            { id: "s2", name: "披風", price: 100, desc: "基礎披風", type: "equip_cloak" },
+            { id: "s3", name: "頭盔", price: 100, desc: "基礎頭盔", type: "equip_helmet" },
+            { id: "s4", name: "鎧甲", price: 100, desc: "基礎鎧甲", type: "equip_armor" },
+            { id: "s5", name: "手套", price: 100, desc: "基礎手套", type: "equip_gloves" },
+            { id: "s6", name: "鞋子", price: 100, desc: "基礎鞋子", type: "equip_shoes" },
+            { id: "s7", name: "真愛戒指", price: 99, desc: "用於告白結伴侶", type: "item" },
+        ];
+
+        const loadDB = (key, def) => { try { const d = localStorage.getItem("snow3_" + key); return d ? JSON.parse(d) : def; } catch(e) { return def; } };
+        const saveDB = (key, val) => localStorage.setItem("snow3_" + key, JSON.stringify(val));
+
+        // ======================= 主程式 =======================
+        function App() {
+            // --- 資料庫狀態 ---
+            const [usersDB, setUsersDB] = useState(() => loadDB("usersDB", {}));
+            const [guilds, setGuilds] = useState(() => loadDB("guilds", [{ name: "皇家雪騎兵", leader: "媛婷GM", reqVip: 0, members: ["媛婷GM"], activePoints: 9999 }]));
+            const [shop, setShop] = useState(() => loadDB("shop", INITIAL_SHOP));
+            const [globalChats, setGlobalChats] = useState(() => loadDB("chats", [])); // 全域聊天
+            
+            // --- 當前玩家狀態 ---
+            const [user, setUser] = useState(() => loadDB("currentUser", null)); // 包含帳密
+            const [player, setPlayer] = useState(() => loadDB("playerData", null)); // 遊戲內數據
+            
+            // --- UI 狀態 ---
+            const [activeTab, setActiveTab] = useState("lobby"); 
+            const [sysMsg, setSysMsg] = useState("");
+            const [gameConfig, setGameConfig] = useState(null); // { mode: '1v1', isRanked: false }
+            
+            // --- 聊天系統狀態 ---
+            const [chatChannel, setChatChannel] = useState("world"); // world, dating, guild, friend, private
+            const [chatTarget, setChatTarget] = useState(""); // 私聊對象
+            const [chatInput, setChatInput] = useState("");
+
+            const isGM = user?.username === "媛婷GM";
+
+            // --- STREAMING_CHUNK: 狀態同步與系統循環 ---
+            useEffect(() => { saveDB("usersDB", usersDB); saveDB("guilds", guilds); saveDB("shop", shop); saveDB("chats", globalChats); }, [usersDB, guilds, shop, globalChats]);
+            useEffect(() => { if (user) saveDB("currentUser", user); else localStorage.removeItem("snow3_currentUser"); }, [user]);
+            useEffect(() => { if (player) saveDB("playerData", player); }, [player]);
+
+            // 體力與 AI 互動定時器
+            useEffect(() => {
+                if(!player) return;
+                const timer = setInterval(() => {
+                    const now = Date.now();
+                    setPlayer(p => {
+                        let diffMins = Math.floor((now - p.lastStaminaUpdate) / 60000);
+                        if (diffMins > 0 && p.stamina < 100) {
+                            return { ...p, stamina: Math.min(100, p.stamina + diffMins), lastStaminaUpdate: now };
+                        }
+                        return p;
+                    });
+
+                    // AI 隨機互動
+                    if (Math.random() < 0.1) {
+                        const bot = AI_BOTS[rand(0, AI_BOTS.length - 1)];
+                        const r = rand(1, 4);
+                        if (r === 1) triggerMsg(`🤖 [系統] ${bot} 邀請你一起打排位！`);
+                        else if (r === 2) {
+                            triggerMsg(`🤖 收到 ${bot} 的每日禮包！(體力+1)`);
+                            setPlayer(p => ({...p, stamina: Math.min(100, p.stamina+1)}));
+                        } else if (r === 3) {
+                            sendChatMsg("world", bot, "今天天氣真冷，大家來打雪球保暖吧！⛄");
+                        } else {
+                            sendChatMsg("private", bot, "要不要一起組隊？我輔助很溜喔！", user.username);
+                        }
+                    }
+                }, 30000);
+                return () => clearInterval(timer);
+            }, [player, user]);
+
+            const triggerMsg = (txt) => { setSysMsg(txt); setTimeout(() => setSysMsg(""), 4000); };
+
+            // --- STREAMING_CHUNK: 認證系統 ---
+            const [authForm, setAuthForm] = useState({ user:'', pass:'', email:'', code:'' });
+            const [authMode, setAuthMode] = useState('login');
+            const [mockCode, setMockCode] = useState("");
+
+            const handleAuth = (e) => {
+                e.preventDefault();
+                const { user: u, pass: p, email: em, code } = authForm;
+                
+                if (authMode === 'reg') {
+                    if (usersDB[u]) return triggerMsg("❌ 帳號已存在！");
+                    if (u === "媛婷GM" && p !== "yt8323@$") return triggerMsg("❌ GM註冊權限不足！");
+                    setUsersDB(prev => ({ ...prev, [u]: { pass: p, email: em } }));
+                    const initPlayer = {
+                        uid: u, avatar: "⛄", intro: "冰雪新手", partner: "單身", 
+                        win: 0, draw: 0, loss: 0, rankedScore: 1000,
+                        starTWD: 100, rechargeTWD: 0, exp: 0, level: 1,
+                        guildName: "", guildTitle: "",
+                        stamina: 100, lastStaminaUpdate: Date.now(),
+                        shields: 3, rings: 0, monthlyCard: 0, lastDailyClaim: 0,
+                        inventory: [], equipment: { cloak: null, helmet: null, armor: null, gloves: null, shoes: null },
+                        friends: []
+                    };
+                    setUser({ username: u }); setPlayer(initPlayer);
+                    triggerMsg("✅ 註冊成功！");
+                } 
+                else if (authMode === 'login') {
+                    if (u === "媛婷GM") {
+                        if (p !== "yt8323@$") return triggerMsg("❌ 密碼錯誤！");
+                        setUser({ username: u }); 
+                        setPlayer(usersDB[u]?.player || { ...player, uid: u }); // GM 初始化
+                    } else {
+                        if (!usersDB[u] || usersDB[u].pass !== p) return triggerMsg("❌ 帳密錯誤！");
+                        setUser({ username: u });
+                        setPlayer(usersDB[u].player);
+                    }
+                    triggerMsg(`✅ 登入成功！歡迎 ${u}`);
+                } 
+                else if (authMode === 'forgot') {
+                    if (!usersDB[u]) return triggerMsg("❌ 找不到此帳號！");
+                    if (code !== mockCode) return triggerMsg("❌ 驗證碼錯誤！");
+                    setUsersDB(prev => ({ ...prev, [u]: { ...prev[u], pass: p } }));
+                    triggerMsg("✅ 密碼重置成功！"); setAuthMode('login');
+                }
+            };
+            
+            // 登出時存檔當前玩家
+            const handleLogout = () => {
+                if(user && player) {
+                    setUsersDB(prev => ({ ...prev, [user.username]: { ...prev[user.username], player: player } }));
+                }
+                setUser(null); setPlayer(null);
+            };
+
+            // --- STREAMING_CHUNK: 裝備與屬性邏輯 ---
+            const createEquip = (typeInfo) => {
+                const typeMap = { 'equip_cloak':'cloak', 'equip_helmet':'helmet', 'equip_armor':'armor', 'equip_gloves':'gloves', 'equip_shoes':'shoes' };
+                const t = typeInfo === 'box' ? Object.values(typeMap)[rand(0,4)] : typeMap[typeInfo];
+                let eq = { id: generateId(), type: t, level: 0, hpBonus: rand(5, 20) };
+                if (t === 'cloak') {
+                    eq.regen = rand(1, 10);
+                    eq.shieldTime = Number(randFloat(0.5, 3.0));
+                    eq.shieldChance = rand(5, 36);
+                } else if (t === 'shoes') {
+                    if (Math.random() > 0.5) { eq.invisTime = Number(randFloat(0.5, 3.0)); eq.invisChance = rand(5, 36); } 
+                    else { eq.speedBoost = rand(1, 36); }
+                }
+                return eq;
+            };
+
+            const fuseEquipment = (eq1, eq2) => {
+                if (eq1.type !== eq2.type) return triggerMsg("❌ 只能融合相同部位裝備！");
+                if (eq1.level >= 10 || eq2.level >= 10) return triggerMsg("❌ 已達最大等級 +10！");
+                const result = {
+                    ...eq1, id: generateId(), level: Math.max(eq1.level, eq2.level) + 1,
+                    hpBonus: Math.max(eq1.hpBonus, eq2.hpBonus) + rand(1, 5)
+                };
+                if(result.regen) result.regen = Math.max(eq1.regen||0, eq2.regen||0) + rand(1,2);
+                if(result.speedBoost) result.speedBoost = Math.max(eq1.speedBoost||0, eq2.speedBoost||0) + rand(1,3);
+                if(result.shieldChance) result.shieldChance = Math.max(eq1.shieldChance||0, eq2.shieldChance||0) + 1;
+                
+                setPlayer(p => {
+                    const inv = p.inventory.filter(i => i.id !== eq1.id && i.id !== eq2.id);
+                    return { ...p, inventory: [...inv, result] };
+                });
+                triggerMsg(`✨ 融合成功！獲得 Lv.${result.level} 裝備！`);
+            };
+
+            // --- STREAMING_CHUNK: 系統功能 (商城/儲值/公會) ---
+            const handleRecharge = (twd) => {
+                const star = twd * 5;
+                setPlayer(p => ({ ...p, starTWD: p.starTWD + star, rechargeTWD: p.rechargeTWD + twd }));
+                triggerMsg(`💎 儲值成功！獲得 ${star} 星台幣。目前 VIP 階級: ${getVip(player.rechargeTWD + twd)}`);
+            };
+
+            const claimMonthly = () => {
+                const now = Date.now();
+                if (player.monthlyCard < now) return triggerMsg("❌ 月卡未開通或已過期！");
+                const today = new Date().toDateString();
+                if (new Date(player.lastDailyClaim).toDateString() === today) return triggerMsg("❌ 今日已領取！");
+                setPlayer(p => ({ ...p, starTWD: p.starTWD + 10, shields: p.shields + 3, lastDailyClaim: now }));
+                triggerMsg("🎁 月卡每日發送：星台幣+10、防護罩+3！");
+            };
+
+            const handleCreateGuild = () => {
+                const name = prompt("輸入公會名稱 (需100星台幣):");
+                if(!name) return;
+                if(player.starTWD < 100) return triggerMsg("星台幣不足！");
+                const req = prompt("設定入會最低 VIP 等級 (0-10):", "0");
+                setPlayer(p => ({...p, starTWD: p.starTWD-100, guildName: name, guildTitle: "會長"}));
+                setGuilds(prev => [...prev, { name, leader: user.username, reqVip: Number(req)||0, members: [user.username], activePoints: 10 }]);
+                triggerMsg(`🏰 成功建立公會 ${name}！`);
+            };
+
+            // --- STREAMING_CHUNK: 聊天系統 ---
+            const sendChatMsg = (channel, sender, text, target="") => {
+                const msg = { id: generateId(), channel, sender, target, text, time: new Date().toLocaleTimeString() };
+                setGlobalChats(prev => [...prev, msg].slice(-200)); // 保留最後200條
+            };
+
+            const renderChat = () => {
+                const msgs = globalChats.filter(m => {
+                    if(chatChannel === 'world' || chatChannel === 'dating') return m.channel === chatChannel;
+                    if(chatChannel === 'guild') return m.channel === 'guild' && player.guildName && (usersDB[m.sender]?.player?.guildName === player.guildName || m.sender.includes(player.guildName));
+                    if(chatChannel === 'private') return m.channel === 'private' && (m.target === user.username || m.sender === user.username);
+                    return false;
+                });
+
+                return (
+                    <div class="flex flex-col h-full bg-slate-900 border border-slate-700 rounded-lg overflow-hidden">
+                        <div class="flex bg-slate-800 text-xs overflow-x-auto shrink-0">
+                            {['world:一般', 'dating:交友', 'guild:公會', 'private:私聊'].map(t => {
+                                const [id, label] = t.split(':');
+                                return <button key={id} onClick={()=>setChatChannel(id)} class={`px-3 py-2 font-bold whitespace-nowrap ${chatChannel===id?'bg-sky-600 text-white':'text-slate-400'}`}>{label}</button>
+                            })}
+                        </div>
+                        <div class="flex-1 overflow-y-auto p-2 space-y-2">
+                            {msgs.map(m => (
+                                <div key={m.id} class="text-xs break-words">
+                                    <span class="text-slate-500">[{m.time}]</span> 
+                                    <span class="font-bold text-sky-300 cursor-pointer" onClick={()=>{setChatChannel('private'); setChatTarget(m.sender);}}> {m.sender}</span>
+                                    {m.target && <span class="text-purple-400"> 對 {m.target}</span>}: 
+                                    <span class="text-white ml-1">{m.text}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <form onSubmit={(e)=>{
+                            e.preventDefault();
+                            if(!chatInput.trim()) return;
+                            if(chatChannel==='private' && !chatTarget) return triggerMsg("請先點擊人名選擇私聊對象！");
+                            sendChatMsg(chatChannel, user.username, chatInput, chatTarget);
+                            setChatInput("");
+                        }} class="flex p-1 bg-slate-800 shrink-0">
+                            {chatChannel==='private' && <input value={chatTarget} onChange={e=>setChatTarget(e.target.value)} placeholder="對象" class="w-16 bg-slate-900 text-xs text-white px-1 outline-none"/>}
+                            <input value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder="輸入訊息..." class="flex-1 bg-slate-900 text-xs text-white px-2 py-1 outline-none"/>
+                            <button type="submit" class="bg-sky-600 text-white px-3 text-xs font-bold">送出</button>
+                        </form>
+                    </div>
+                );
+            };
+
+            // --- STREAMING_CHUNK: 遊戲配對與結算 ---
+            const startGame = (mode, isRanked) => {
+                if(player.stamina < 1) return triggerMsg("⚡ 體力不足，無法開局！");
+                setPlayer(p => ({...p, stamina: p.stamina - 1}));
+                
+                triggerMsg(`🔍 尋找${isRanked?'真人':'對手'}中...`);
+                setTimeout(() => {
+                    setGameConfig({ mode, isRanked, teamA: [user.username], teamB: ["AI對手"] }); // 簡化配對
+                }, 1500);
+            };
+
+            const handleGameEnd = (result) => { // result: { win: bool, draw: bool }
+                setGameConfig(null);
+                let gainStar = 0, gainExp = 0, rankChange = 0;
+                let hasPartner = player.partner && player.partner !== "單身";
+
+                if (result.win) {
+                    gainStar = rand(1, 3); gainExp = 30; rankChange = 25;
+                    if (hasPartner) { gainStar += rand(1,3); gainExp = Math.floor(gainExp * 1.2); }
+                } else if (result.draw) {
+                    gainStar = 0; gainExp = 5; rankChange = 0;
+                } else {
+                    gainStar = 0; gainExp = 10; rankChange = -15;
+                    if (hasPartner) { gainStar += 1; gainExp = Math.floor(gainExp * 1.1); }
+                }
+
+                if (player.monthlyCard > Date.now()) gainExp = Math.floor(gainExp * 1.2);
+
+                setPlayer(p => {
+                    let nextExp = p.exp + gainExp;
+                    let nextLvl = p.level;
+                    if (nextExp >= nextLvl * 100) { nextExp -= nextLvl*100; nextLvl++; }
+                    return {
+                        ...p,
+                        starTWD: p.starTWD + gainStar,
+                        exp: nextExp, level: nextLvl,
+                        win: result.win ? p.win + 1 : p.win,
+                        loss: (!result.win && !result.draw) ? p.loss + 1 : p.loss,
+                        draw: result.draw ? p.draw + 1 : p.draw,
+                        rankedScore: Math.max(0, p.rankedScore + rankChange)
+                    };
+                });
+
+                if(player.guildName && result.win) {
+                    setGuilds(gs => gs.map(g => g.name === player.guildName ? {...g, activePoints: g.activePoints+10} : g));
+                }
+
+                triggerMsg(`結算: ${result.win?'勝利':result.draw?'平手':'失敗'}! 星台幣+${gainStar}, 經驗+${gainExp}, 積分${rankChange>0?'+':''}${rankChange}`);
+            };
+
+            // ======================= UI 渲染 =======================
+            if (!user) {
+                return (
+                    <div class="h-full w-full bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] bg-blue-950 flex items-center justify-center">
+                        <div class="glass-panel p-8 rounded-2xl w-full max-w-sm text-center shadow-[0_0_30px_#38bdf8]">
+                            <h1 class="text-3xl mb-6 font-black text-sky-400 arcade-font">媛婷雪球大冒險</h1>
+                            <div class="flex gap-2 mb-4">
+                                <button onClick={()=>setAuthMode('login')} class={`flex-1 py-2 font-bold rounded ${authMode==='login'?'bg-sky-600':'bg-slate-800'}`}>登入</button>
+                                <button onClick={()=>setAuthMode('reg')} class={`flex-1 py-2 font-bold rounded ${authMode==='reg'?'bg-sky-600':'bg-slate-800'}`}>註冊</button>
+                            </div>
+                            <form onSubmit={handleAuth} class="space-y-3">
+                                <input placeholder="帳號 ID" value={authForm.user} onChange={e=>setAuthForm({...authForm, user:e.target.value})} required class="w-full bg-slate-900 border border-slate-700 p-3 rounded text-white outline-none focus:border-sky-500" />
+                                <input type="password" placeholder="密碼" value={authForm.pass} onChange={e=>setAuthForm({...authForm, pass:e.target.value})} required class="w-full bg-slate-900 border border-slate-700 p-3 rounded text-white outline-none focus:border-sky-500" />
+                                {authMode !== 'login' && <input type="email" placeholder="信箱" value={authForm.email} onChange={e=>setAuthForm({...authForm, email:e.target.value})} required class="w-full bg-slate-900 border border-slate-700 p-3 rounded text-white outline-none" />}
+                                {authMode === 'forgot' && (
+                                    <div class="flex gap-2">
+                                        <input placeholder="驗證碼" value={authForm.code} onChange={e=>setAuthForm({...authForm, code:e.target.value})} required class="w-2/3 bg-slate-900 border border-slate-700 p-3 rounded text-white outline-none" />
+                                        <button type="button" onClick={()=>{const c=Math.floor(1000+Math.random()*9000).toString();setMockCode(c);alert("驗證碼: "+c);}} class="w-1/3 bg-indigo-600 text-xs rounded font-bold">獲取</button>
+                                    </div>
+                                )}
+                                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-3 rounded-lg mt-2 text-lg shadow-lg active:scale-95 transition-transform">
+                                    {authMode === 'login' ? '進入遊戲' : authMode === 'reg' ? '註冊帳號' : '重置密碼'}
+                                </button>
+                            </form>
+                            {authMode === 'login' && <button onClick={()=>setAuthMode('forgot')} class="text-xs text-slate-400 mt-4">忘記密碼？</button>}
+                        </div>
+                    </div>
+                );
+            }
+
+            if (gameConfig) {
+                return <GameEngine config={gameConfig} player={player} onEnd={handleGameEnd} />;
+            }
+
+            // --- STREAMING_CHUNK: 主介面版面 ---
+            return (
+                <div class="h-full w-full flex flex-col bg-slate-950 text-sm overflow-hidden md:flex-row">
+                    
+                    {/* 左側：聊天與社交 (桌面版) */}
+                    <aside class="hidden md:flex w-80 flex-col bg-slate-900 border-r border-slate-800 p-2 space-y-2 shrink-0">
+                        <div class="flex items-center gap-3 p-2 bg-slate-800 rounded-lg">
+                            <div class="text-3xl cursor-pointer" onClick={()=>{const a=prompt("輸入大頭貼Emoji",player.avatar); if(a)setPlayer({...player,avatar:a});}}>{player.avatar}</div>
+                            <div class="flex-1">
+                                <div class="font-bold text-white flex items-center gap-1">{user.username} <span class="bg-yellow-600 text-[10px] px-1 rounded text-black font-black">{getVip(player.rechargeTWD)}</span></div>
+                                <div class="text-[10px] text-slate-400">{player.guildName ? `[${player.guildName}] ${player.guildTitle}` : '無公會'}</div>
+                            </div>
+                        </div>
+                        <div class="flex-1 overflow-hidden">
+                            {renderChat()}
+                        </div>
+                    </aside>
+
+                    {/* 右側/主畫面 */}
+                    <div class="flex-1 flex flex-col overflow-hidden">
+                        {/* 頂部資源列 */}
+                        <header class="bg-slate-900 border-b border-slate-800 p-2 flex flex-wrap justify-between items-center shrink-0 gap-2">
+                            <div class="md:hidden flex items-center gap-2">
+                                <span class="text-xl">{player.avatar}</span>
+                                <span class="font-bold">{user.username} <span class="text-yellow-500 text-[10px]">{getVip(player.rechargeTWD)}</span></span>
+                            </div>
+                            <div class="flex gap-2 text-xs font-bold overflow-x-auto w-full md:w-auto">
+                                <div class="bg-green-900/40 px-2 py-1 rounded text-green-400 border border-green-700 shrink-0">⚡ {player.stamina}/100</div>
+                                <div class="bg-yellow-900/40 px-2 py-1 rounded text-yellow-400 border border-yellow-700 shrink-0">💰 星台幣: {player.starTWD}</div>
+                                <div class="bg-purple-900/40 px-2 py-1 rounded text-purple-400 border border-purple-700 shrink-0">🏆 積分: {player.rankedScore}</div>
+                            </div>
+                        </header>
+
+                        {sysMsg && <div class="bg-blue-600 text-white text-center text-xs py-1 font-bold animate-pulse shrink-0">{sysMsg}</div>}
+
+                        {/* 主要內容區 */}
+                        <main class="flex-1 overflow-y-auto p-4 relative bg-[url('https://www.transparenttextures.com/patterns/stardust.png')]">
+                            
+                            {/* --- 遊戲大廳 --- */}
+                            {activeTab === 'lobby' && (
+                                <div class="max-w-2xl mx-auto space-y-6">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div class="glass-panel p-6 rounded-xl text-center shadow-lg border-sky-500/50">
+                                            <h2 class="text-xl font-black text-sky-400 mb-2">休閒一般場</h2>
+                                            <p class="text-[10px] text-slate-400 mb-4">一鍵開局，不足自動補電腦 (扣1體力)</p>
+                                            <div class="flex justify-center gap-2">
+                                                <button onClick={()=>startGame('1v1',false)} class="bg-sky-700 hover:bg-sky-600 text-white px-4 py-2 rounded font-bold">1V1</button>
+                                                <button onClick={()=>startGame('2v2',false)} class="bg-sky-700 hover:bg-sky-600 text-white px-4 py-2 rounded font-bold">2V2</button>
+                                                <button onClick={()=>startGame('3v3',false)} class="bg-sky-700 hover:bg-sky-600 text-white px-4 py-2 rounded font-bold">3V3</button>
+                                            </div>
+                                        </div>
+                                        <div class="glass-panel p-6 rounded-xl text-center shadow-lg border-purple-500/50">
+                                            <h2 class="text-xl font-black text-purple-400 mb-2">排位積分賽</h2>
+                                            <p class="text-[10px] text-slate-400 mb-4">必須真人連線，爭奪全服排名 (扣1體力)</p>
+                                            <div class="flex justify-center gap-2">
+                                                <button onClick={()=>startGame('1v1',true)} class="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded font-bold">單排</button>
+                                                <button onClick={()=>startGame('2v2',true)} class="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded font-bold">雙排</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* --- 個人資料 --- */}
+                            {activeTab === 'profile' && (
+                                <div class="max-w-md mx-auto space-y-4">
+                                    <div class="glass-panel p-4 rounded-xl space-y-2">
+                                        <h3 class="font-black text-sky-400 border-b border-slate-700 pb-2">個人資訊</h3>
+                                        <div class="flex justify-between text-xs text-slate-300"><span>伴侶</span><span class="text-pink-400 font-bold">{player.partner}</span></div>
+                                        <div class="flex justify-between text-xs text-slate-300"><span>公會</span><span class="text-indigo-400">{player.guildName||'無'} ({player.guildTitle})</span></div>
+                                        <div class="flex justify-between text-xs text-slate-300"><span>戰績</span><span>勝:{player.win} 和:{player.draw} 敗:{player.loss}</span></div>
+                                        <div class="pt-2">
+                                            <label class="text-[10px] text-slate-500">自我介紹 (20字內)</label>
+                                            <input maxLength={20} value={player.intro} onChange={e=>setPlayer({...player, intro:e.target.value})} class="w-full bg-slate-900 border border-slate-700 p-1 rounded text-white text-xs outline-none" />
+                                        </div>
+                                    </div>
+                                    <button onClick={handleLogout} class="w-full bg-red-900/50 text-red-400 border border-red-800 py-2 rounded font-bold text-xs">登出帳號</button>
+                                </div>
+                            )}
+
+                            {/* --- 背包與裝備 --- */}
+                            {activeTab === 'equip' && (
+                                <div class="max-w-xl mx-auto space-y-4">
+                                    <div class="glass-panel p-4 rounded-xl">
+                                        <h3 class="font-black text-indigo-300 mb-2">裝備欄 (點擊卸下)</h3>
+                                        <div class="grid grid-cols-5 gap-2 text-center text-xs">
+                                            {['helmet','armor','cloak','gloves','shoes'].map(t => {
+                                                const eq = player.equipment[t];
+                                                return (
+                                                    <div key={t} class="bg-slate-900 border border-slate-700 rounded p-1 flex flex-col items-center justify-center h-16 relative" onClick={() => {
+                                                        if(eq) setPlayer(p=>({...p, equipment:{...p.equipment, [t]:null}, inventory:[...p.inventory, eq]}));
+                                                    }}>
+                                                        <span class="text-[9px] text-slate-500 absolute top-0">{t}</span>
+                                                        {eq ? <span class="text-sky-300 font-bold mt-2">+{eq.level}<br/><span class="text-[8px] text-green-400">HP+{eq.hpBonus}</span></span> : <span class="text-slate-600 mt-2">空</span>}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    <div class="glass-panel p-4 rounded-xl">
+                                        <div class="flex justify-between items-center mb-2">
+                                            <h3 class="font-black text-sky-300">背包空間</h3>
+                                            <span class="text-xs text-slate-400">容量: {player.inventory.length}/50</span>
+                                        </div>
+                                        <div class="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                                            {player.inventory.map(item => (
+                                                <div key={item.id} class="bg-slate-800 p-2 rounded text-center text-[10px] border border-slate-600 cursor-pointer" onClick={() => {
+                                                    const act = prompt(`[${item.type} Lv.${item.level}] HP+${item.hpBonus}\n1: 穿戴\n2: 融合(+1)\n3: 出售(10星台幣)`);
+                                                    if(act === '1') {
+                                                        setPlayer(p => {
+                                                            const old = p.equipment[item.type];
+                                                            let inv = p.inventory.filter(i=>i.id!==item.id);
+                                                            if(old) inv.push(old);
+                                                            return {...p, equipment:{...p.equipment, [item.type]:item}, inventory: inv};
+                                                        });
+                                                    } else if (act === '2') {
+                                                        const target = player.inventory.find(i=>i.id!==item.id && i.type===item.type);
+                                                        if(target) fuseEquipment(item, target); else triggerMsg("無同部位裝備可融合！");
+                                                    } else if (act === '3') {
+                                                        setPlayer(p => ({...p, starTWD: p.starTWD+10, inventory: p.inventory.filter(i=>i.id!==item.id)}));
+                                                        triggerMsg("出售成功，獲得 10 星台幣");
+                                                    }
+                                                }}>
+                                                    <div class="font-bold text-white truncate">{item.type}</div>
+                                                    <div class="text-sky-400">+{item.level}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* --- 商城與儲值 --- */}
+                            {activeTab === 'shop' && (
+                                <div class="max-w-2xl mx-auto space-y-6">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {/* 儲值區 */}
+                                        <div class="glass-panel p-4 rounded-xl border-yellow-500/50">
+                                            <h3 class="font-black text-yellow-400 mb-2">💳 儲值中心 (1TWD = 5星台幣)</h3>
+                                            <div class="grid grid-cols-2 gap-2 text-center">
+                                                <button onClick={()=>handleRecharge(30)} class="bg-slate-800 border border-slate-600 p-2 rounded text-xs hover:bg-slate-700">30 TWD<br/><span class="text-yellow-400 font-bold">150 星台幣</span></button>
+                                                <button onClick={()=>handleRecharge(300)} class="bg-slate-800 border border-slate-600 p-2 rounded text-xs hover:bg-slate-700">300 TWD<br/><span class="text-yellow-400 font-bold">1500 星台幣</span></button>
+                                            </div>
+                                            <div class="mt-4 p-2 bg-gradient-to-r from-amber-900/80 to-yellow-900/80 rounded flex justify-between items-center">
+                                                <div>
+                                                    <div class="text-xs font-bold text-yellow-400">👑 尊爵月卡 (99 TWD)</div>
+                                                    <div class="text-[9px] text-yellow-100">每日10星台幣+3防護罩, EXP+20%</div>
+                                                </div>
+                                                <button onClick={()=>{
+                                                    if(player.monthlyCard > Date.now()) claimMonthly();
+                                                    else { handleRecharge(99); setPlayer(p=>({...p, monthlyCard: Date.now()+30*24*60*60*1000})); triggerMsg("月卡開通成功！"); }
+                                                }} class="bg-yellow-600 text-black px-2 py-1 text-[10px] font-bold rounded">
+                                                    {player.monthlyCard > Date.now() ? '領取每日' : '立即開通'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* 道具商城 */}
+                                        <div class="glass-panel p-4 rounded-xl border-sky-500/50">
+                                            <h3 class="font-black text-sky-400 mb-2">🛒 道具商城</h3>
+                                            <div class="space-y-2 h-48 overflow-y-auto pr-2">
+                                                {shop.map(item => (
+                                                    <div key={item.id} class="bg-slate-900 p-2 rounded border border-slate-700 flex justify-between items-center">
+                                                        <div>
+                                                            <div class="text-xs font-bold text-white">{item.name}</div>
+                                                            <div class="text-[9px] text-slate-400 w-32 truncate">{item.desc}</div>
+                                                        </div>
+                                                        <div class="flex items-center gap-2">
+                                                            <span class="text-yellow-400 text-[10px] font-bold">{item.price} 星</span>
+                                                            <button onClick={() => {
+                                                                if(player.starTWD < item.price) return triggerMsg("星台幣不足！");
+                                                                setPlayer(p => ({...p, starTWD: p.starTWD - item.price}));
+                                                                if(item.type.startsWith('equip_') || item.type === 'box') {
+                                                                    setPlayer(p=>({...p, inventory: [...p.inventory, createEquip(item.type)]}));
+                                                                } else if(item.type === 'shield') setPlayer(p=>({...p, shields: p.shields+1}));
+                                                                else if(item.type === 'ring') setPlayer(p=>({...p, rings: p.rings+1}));
+                                                                triggerMsg(`購買 ${item.name} 成功！`);
+                                                            }} class="bg-sky-600 px-2 py-1 rounded text-[10px] text-white">購買</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* --- 公會系統 --- */}
+                            {activeTab === 'guild' && (
+                                <div class="max-w-xl mx-auto space-y-4">
+                                    <div class="flex justify-between items-center">
+                                        <h2 class="text-lg font-black text-indigo-400">公會大廳</h2>
+                                        {!player.guildName && <button onClick={handleCreateGuild} class="bg-indigo-600 text-white px-3 py-1 rounded text-xs">創建公會 (100星台幣)</button>}
+                                    </div>
+                                    
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {/* 全服公會列表 */}
+                                        <div class="glass-panel p-4 rounded-xl h-64 overflow-y-auto">
+                                            <h3 class="text-xs font-bold text-slate-400 mb-2">全服公會列表</h3>
+                                            <div class="space-y-2">
+                                                {guilds.map(g => (
+                                                    <div key={g.name} class="bg-slate-900 p-2 rounded border border-slate-700 flex justify-between items-center">
+                                                        <div>
+                                                            <div class="text-xs font-bold text-white">{g.name} <span class="text-[9px] text-yellow-500">Req: {VIP_LEVELS[g.reqVip]?.name}</span></div>
+                                                            <div class="text-[9px] text-slate-400">會長: {g.leader} | 人數: {g.members.length}</div>
+                                                        </div>
+                                                        {!player.guildName && (
+                                                            <button onClick={()=>{
+                                                                const myVipIdx = VIP_LEVELS.findIndex(v=>v.name === getVip(player.rechargeTWD));
+                                                                if(myVipIdx < g.reqVip) return triggerMsg("VIP 等級不足！");
+                                                                setPlayer(p=>({...p, guildName: g.name, guildTitle: '成員'}));
+                                                                setGuilds(gs=>gs.map(gx=>gx.name===g.name ? {...gx, members: [...gx.members, user.username]} : gx));
+                                                                triggerMsg(`成功加入 ${g.name}`);
+                                                            }} class="text-sky-400 text-[10px]">加入</button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* 我的公會 */}
+                                        {player.guildName && (
+                                            <div class="glass-panel p-4 rounded-xl h-64 flex flex-col">
+                                                <h3 class="text-xs font-bold text-indigo-300 mb-2">[{player.guildName}] 成員列表</h3>
+                                                <div class="flex-1 overflow-y-auto space-y-1">
+                                                    {guilds.find(g=>g.name===player.guildName)?.members.map(m => (
+                                                        <div key={m} class="flex justify-between items-center bg-slate-900 p-1 px-2 rounded text-xs">
+                                                            <span class="text-white">{m}</span>
+                                                            {m !== user.username && (
+                                                                <button onClick={()=>{
+                                                                    if(player.friends.includes(m)) return;
+                                                                    setPlayer(p=>({...p, friends: [...p.friends, m]})); triggerMsg("已加入好友");
+                                                                }} class="text-[9px] bg-green-700/50 text-green-300 px-1 rounded">加好友</button>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <button onClick={()=>{
+                                                    setPlayer(p=>({...p, guildName:"", guildTitle:""}));
+                                                    setGuilds(gs=>gs.map(g=>g.name===player.guildName ? {...g, members: g.members.filter(x=>x!==user.username)} : g));
+                                                }} class="mt-2 w-full bg-red-900/50 text-red-400 text-xs py-1 rounded">退出公會</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* --- 社交/好友 --- */}
+                            {activeTab === 'social' && (
+                                <div class="max-w-md mx-auto glass-panel p-4 rounded-xl space-y-4">
+                                    <div class="flex gap-2">
+                                        <input id="addF" placeholder="輸入玩家ID" class="flex-1 bg-slate-900 text-xs p-2 rounded outline-none border border-slate-700 text-white" />
+                                        <button onClick={()=>{
+                                            const v = document.getElementById('addF').value;
+                                            if(v && !player.friends.includes(v)) { setPlayer(p=>({...p, friends:[...p.friends, v]})); triggerMsg("添加成功"); }
+                                        }} class="bg-sky-600 text-white px-3 rounded text-xs font-bold">加好友</button>
+                                    </div>
+                                    <div class="space-y-2">
+                                        {player.friends.map(f => (
+                                            <div key={f} class="bg-slate-900 p-2 rounded border border-slate-700 flex justify-between items-center">
+                                                <span class="text-sm font-bold text-white">{f}</span>
+                                                <div class="flex gap-1">
+                                                    <button onClick={()=>{setChatChannel('private'); setChatTarget(f);}} class="text-[10px] bg-indigo-600 px-2 py-1 rounded text-white">私訊</button>
+                                                    <button onClick={()=>{
+                                                        if(player.rings < 1) return triggerMsg("需要真愛戒指！");
+                                                        setPlayer(p=>({...p, rings:p.rings-1, partner: f})); triggerMsg(`💖 成功與 ${f} 結為伴侶！`);
+                                                    }} class="text-[10px] bg-pink-600 px-2 py-1 rounded text-white">告白</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {player.friends.length === 0 && <div class="text-center text-xs text-slate-500 py-4">暫無好友，去公會或世界頻道認識新朋友吧！</div>}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* --- GM 後台 --- */}
+                            {activeTab === 'gm' && isGM && (
+                                <div class="max-w-2xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div class="bg-red-950/50 p-4 rounded border border-red-800 space-y-3">
+                                        <h3 class="text-red-400 font-bold border-b border-red-800 pb-1">修改本機玩家數據</h3>
+                                        <div class="grid grid-cols-2 gap-2 text-xs">
+                                            <input id="gm_star" placeholder="星台幣" defaultValue={player.starTWD} class="bg-slate-900 text-white p-1 rounded border border-slate-700"/>
+                                            <input id="gm_exp" placeholder="經驗值" defaultValue={player.exp} class="bg-slate-900 text-white p-1 rounded border border-slate-700"/>
+                                            <input id="gm_win" placeholder="勝利次數" defaultValue={player.win} class="bg-slate-900 text-white p-1 rounded border border-slate-700"/>
+                                            <input id="gm_loss" placeholder="失敗次數" defaultValue={player.loss} class="bg-slate-900 text-white p-1 rounded border border-slate-700"/>
+                                        </div>
+                                        <button onClick={()=>{
+                                            setPlayer(p=>({...p, 
+                                                starTWD: Number(document.getElementById('gm_star').value),
+                                                exp: Number(document.getElementById('gm_exp').value),
+                                                win: Number(document.getElementById('gm_win').value),
+                                                loss: Number(document.getElementById('gm_loss').value)
+                                            })); triggerMsg("數據已修改！");
+                                        }} class="w-full bg-red-700 text-white py-1 rounded text-xs">套用</button>
+                                    </div>
+
+                                    <div class="bg-red-950/50 p-4 rounded border border-red-800 space-y-3">
+                                        <h3 class="text-red-400 font-bold border-b border-red-800 pb-1">商城管理</h3>
+                                        <div class="flex gap-1 text-xs">
+                                            <input id="gm_i_n" placeholder="名稱" class="w-1/3 bg-slate-900 text-white p-1 rounded border border-slate-700"/>
+                                            <input id="gm_i_p" type="number" placeholder="價格" class="w-1/4 bg-slate-900 text-white p-1 rounded border border-slate-700"/>
+                                            <button onClick={()=>{
+                                                const n = document.getElementById('gm_i_n').value; const p = Number(document.getElementById('gm_i_p').value);
+                                                if(n && p) setShop([...shop, {id: generateId(), name: n, price: p, desc:"GM新增", type:"item"}]);
+                                            }} class="flex-1 bg-red-700 text-white rounded">新增</button>
+                                        </div>
+                                        <div class="h-32 overflow-y-auto space-y-1">
+                                            {shop.map(item => (
+                                                <div key={item.id} class="flex justify-between bg-slate-900 p-1 text-[10px] rounded text-white">
+                                                    <span>{item.name} (${item.price})</span>
+                                                    <button onClick={()=>setShop(s=>s.filter(x=>x.id!==item.id))} class="text-red-500">刪除</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                        </main>
+
+                        {/* 手機版聊天捷徑 (放在底部導航上方) */}
+                        <div class="md:hidden bg-slate-900 p-2 border-t border-slate-800 shrink-0 flex gap-2">
+                            <input value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder={`[${chatChannel}] 快速發言...`} class="flex-1 bg-slate-950 text-xs text-white px-2 py-1 rounded outline-none border border-slate-700"/>
+                            <button onClick={()=>{ if(chatInput) { sendChatMsg(chatChannel, user.username, chatInput); setChatInput("");} }} class="bg-sky-600 px-3 text-xs text-white rounded font-bold">發送</button>
+                        </div>
+
+                        {/* 底部導航 */}
+                        <nav class="bg-slate-950 border-t border-slate-800 flex justify-around p-2 shrink-0 pb-safe">
+                            {[
+                                { id: 'lobby', icon: '🏠', label: '大廳' },
+                                { id: 'profile', icon: '👤', label: '資料' },
+                                { id: 'equip', icon: '⚔️', label: '裝備' },
+                                { id: 'guild', icon: '🛡️', label: '公會' },
+                                { id: 'social', icon: '💬', label: '社交' },
+                                { id: 'shop', icon: '🛒', label: '商城' }
+                            ].map(n => (
+                                <button key={n.id} onClick={() => setActiveTab(n.id)} class={`flex flex-col items-center w-12 rounded transition-all ${activeTab === n.id ? 'text-sky-400' : 'text-slate-500'}`}>
+                                    <span class="text-lg">{n.icon}</span>
+                                    <span class="text-[9px] font-bold">{n.label}</span>
+                                </button>
+                            ))}
+                            {isGM && <button onClick={()=>setActiveTab('gm')} class={`flex flex-col items-center w-12 rounded ${activeTab==='gm'?'text-red-400':'text-slate-500'}`}><span class="text-lg">⚙️</span><span class="text-[9px]">GM</span></button>}
+                        </nav>
+                    </div>
+                </div>
+            );
+        }
+
+        // ======================= STREAMING_CHUNK: 遊戲核心引擎 (Canvas) =======================
+        function GameEngine({ config, player, onEnd }) {
+            const canvasRef = useRef(null);
+            const joyRef = useRef(null);
+            const [time, setTime] = useState(180); // 3分鐘
+            const [score, setScore] = useState({ A: 0, B: 0 });
+            const [joyPos, setJoyPos] = useState({ x: 0, y: 0 });
+            
+            // 處理裝備屬性
+            const eqStats = useMemo(() => {
+                let s = { hpBonus: 0, regen: 0, shieldTime: 0, invisTime: 0, speedBoost: 0 };
+                Object.values(player.equipment).forEach(e => {
+                    if(!e) return;
+                    if(e.hpBonus) s.hpBonus += e.hpBonus;
+                    if(e.regen) s.regen += e.regen;
+                    if(e.shieldTime) s.shieldTime += e.shieldTime;
+                    if(e.invisTime) s.invisTime += e.invisTime;
+                    if(e.speedBoost) s.speedBoost += e.speedBoost * 0.1; // 轉換係數
+                });
+                return s;
+            }, [player.equipment]);
+
+            const state = useRef({
+                p1: { x: 200, y: 200, vx: 0, vy: 0, hp: 100 + eqStats.hpBonus, maxHp: 100 + eqStats.hpBonus, state: 'normal', timer: 0 }, // normal, dodge, defense
+                bots: config.teamB.map((_, i) => ({ x: 600, y: 100 + i*100, vx: 0, vy: 0, hp: 100, maxHp: 100, state: 'normal', timer: 0 })),
+                snowballs: [],
+                snowmen: [{x: 50, y: 50}, {x: 750, y: 50}, {x: 50, y: 350}, {x: 750, y: 350}],
+                keys: {},
+                input: { dx: 0, dy: 0 },
+                lastTick: Date.now()
+            });
+
+            // 控制器邏輯
+            useEffect(() => {
+                const onKD = e => { state.current.keys[e.key] = true; if(['F1','F2','F3'].includes(e.key)) e.preventDefault(); };
+                const onKU = e => state.current.keys[e.key] = false;
+                window.addEventListener('keydown', onKD); window.addEventListener('keyup', onKU);
+                return () => { window.removeEventListener('keydown', onKD); window.removeEventListener('keyup', onKU); };
+            }, []);
+
+            const touchMove = (e) => {
+                if(!joyRef.current) return;
+                const touch = e.touches ? e.touches[0] : e;
+                const rect = joyRef.current.getBoundingClientRect();
+                const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+                let dx = touch.clientX - cx, dy = touch.clientY - cy;
+                const dist = Math.hypot(dx, dy), max = rect.width/2;
+                if (dist > max) { dx = (dx/dist)*max; dy = (dy/dist)*max; }
+                setJoyPos({ x: dx, y: dy });
+                state.current.input = { dx: dx/max, dy: dy/max };
+            };
+            const touchEnd = () => { setJoyPos({x:0, y:0}); state.current.input = {dx:0, dy:0}; };
+
+            // 遊戲主循環
+            useEffect(() => {
+                const cvs = canvasRef.current;
+                const ctx = cvs.getContext('2d');
+                let reqId;
+
+                const loop = () => {
+                    const st = state.current;
+                    const now = Date.now();
+                    const dt = (now - st.lastTick) / 1000;
+                    st.lastTick = now;
+
+                    // 1. 玩家輸入處理
+                    let ax = 0, ay = 0;
+                    if (st.keys['ArrowLeft']) ax = -1; if (st.keys['ArrowRight']) ax = 1;
+                    if (st.keys['ArrowUp']) ay = -1; if (st.keys['ArrowDown']) ay = 1;
+                    if (st.input.dx !== 0 || st.input.dy !== 0) { ax = st.input.dx; ay = st.input.dy; }
+
+                    const baseSpeed = 20 + eqStats.speedBoost;
+                    let speedMult = 1;
+
+                    // 狀態轉換
+                    if (st.keys[' '] && st.p1.state === 'normal') {
+                        st.p1.state = 'defense'; // 防禦後退
+                    } else if (!st.keys[' '] && st.p1.state === 'defense') {
+                        st.p1.state = 'normal';
+                    }
+
+                    if (st.p1.state === 'defense') {
+                        speedMult = 0.3; // 減速
+                        // 反向移動邏輯 (簡單化)
+                    }
+
+                    st.p1.vx += ax * baseSpeed * speedMult * dt;
+                    st.p1.vy += ay * baseSpeed * speedMult * dt;
+
+                    // 摩擦力
+                    st.p1.vx *= 0.9; st.p1.vy *= 0.9;
+                    st.p1.x += st.p1.vx; st.p1.y += st.p1.vy;
+
+                    // 邊界限制
+                    st.p1.x = Math.max(30, Math.min(cvs.width-30, st.p1.x));
+                    st.p1.y = Math.max(30, Math.min(cvs.height-30, st.p1.y));
+
+                    // 2. Bot 簡單 AI
+                    st.bots.forEach(bot => {
+                        if(bot.hp <= 0) return;
+                        const distToP1 = Math.hypot(st.p1.x - bot.x, st.p1.y - bot.y);
+                        if (distToP1 < 200) {
+                            bot.vx += Math.sign(st.p1.x - bot.x) * 10 * dt;
+                            bot.vy += Math.sign(st.p1.y - bot.y) * 10 * dt;
+                        }
+                        bot.vx *= 0.9; bot.vy *= 0.9;
+                        bot.x += bot.vx; bot.y += bot.vy;
+                        bot.x = Math.max(30, Math.min(cvs.width-30, bot.x));
+                        bot.y = Math.max(30, Math.min(cvs.height-30, bot.y));
+                    });
+
+                    // 3. 玩家間碰撞 (彈開)
+                    const checkCollision = (pA, pB) => {
+                        if(pA.hp<=0 || pB.hp<=0) return;
+                        let dx = pB.x - pA.x, dy = pB.y - pA.y;
+                        let dist = Math.hypot(dx, dy);
+                        if (dist < 30) {
+                            let angle = Math.atan2(dy, dx);
+                            let force = (30 - dist) * 0.5;
+                            // 防禦狀態彈力更大
+                            let forceA = pB.state === 'defense' ? force * 2 : force;
+                            let forceB = pA.state === 'defense' ? force * 2 : force;
+
+                            pA.vx -= Math.cos(angle) * forceA; pA.vy -= Math.sin(angle) * forceA;
+                            pB.vx += Math.cos(angle) * forceB; pB.vy += Math.sin(angle) * forceB;
+                        }
+                    };
+                    st.bots.forEach(bot => checkCollision(st.p1, bot));
+
+                    // 4. 雪人發射雪球
+                    if (Math.random() < 0.05) {
+                        const sm = st.snowmen[rand(0, 3)];
+                        const target = Math.random() > 0.5 ? st.p1 : st.bots[rand(0, st.bots.length-1)];
+                        if(target && target.hp > 0) {
+                            const angle = Math.atan2(target.y - sm.y, target.x - sm.x);
+                            st.snowballs.push({ x: sm.x, y: sm.y, vx: Math.cos(angle)*5, vy: Math.sin(angle)*5, r: rand(8, 15) });
+                        }
+                    }
+
+                    // 5. 雪球移動與傷害
+                    st.snowballs = st.snowballs.filter(sb => {
+                        sb.x += sb.vx; sb.y += sb.vy;
+                        let hit = false;
+                        [st.p1, ...st.bots].forEach(p => {
+                            if(p.hp > 0 && Math.hypot(p.x - sb.x, p.y - sb.y) < p.r + sb.r) {
+                                if(p.state !== 'defense') { p.hp -= sb.r; } // 防禦可抵擋傷害
+                                hit = true;
+                                if(p.hp <= 0) {
+                                    if(p === st.p1) setScore(s => ({...s, B: s.B+1}));
+                                    else setScore(s => ({...s, A: s.A+1}));
+                                }
+                            }
+                        });
+                        return !hit && sb.x>0 && sb.x<cvs.width && sb.y>0 && sb.y<cvs.height;
+                    });
+
+                    // 渲染
+                    ctx.fillStyle = "#bae6fd"; ctx.fillRect(0,0,cvs.width,cvs.height); // 冰面
+                    
+                    // 畫雪人
+                    ctx.fillStyle = "#fff";
+                    st.snowmen.forEach(sm => {
+                        ctx.beginPath(); ctx.arc(sm.x, sm.y, 25, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(sm.x, sm.y-20, 15, 0, Math.PI*2); ctx.fill();
+                        ctx.fillStyle = "red"; ctx.fillRect(sm.x-10, sm.y-30, 20, 5); ctx.fillStyle="#fff"; // 紅帽
+                    });
+
+                    // 畫玩家
+                    const drawPlayer = (p, color, name) => {
+                        if(p.hp <= 0) return;
+                        ctx.fillStyle = color;
+                        ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, Math.PI*2); ctx.fill();
+                        if(p.state === 'defense') {
+                            ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 3;
+                            ctx.beginPath(); ctx.arc(p.x, p.y, 20, 0, Math.PI*2); ctx.stroke();
+                        }
+                        // HP bar
+                        ctx.fillStyle = "#000"; ctx.fillRect(p.x-15, p.y-25, 30, 4);
+                        ctx.fillStyle = "#0f0"; ctx.fillRect(p.x-15, p.y-25, 30 * (p.hp/p.maxHp), 4);
+                        ctx.fillStyle = "#000"; ctx.font = "10px sans-serif"; ctx.fillText(name, p.x-10, p.y+25);
+                    };
+                    drawPlayer(st.p1, "#3b82f6", user.username);
+                    st.bots.forEach((b,i) => drawPlayer(b, "#ef4444", `Bot${i+1}`));
+
+                    // 畫雪球
+                    ctx.fillStyle = "#fff"; ctx.shadowColor = "#ccc"; ctx.shadowBlur = 5;
+                    st.snowballs.forEach(sb => { ctx.beginPath(); ctx.arc(sb.x, sb.y, sb.r, 0, Math.PI*2); ctx.fill(); });
+                    ctx.shadowBlur = 0;
+
+                    reqId = requestAnimationFrame(loop);
+                };
+                reqId = requestAnimationFrame(loop);
+
+                // 畫布調整
+                const resize = () => { cvs.width = window.innerWidth; cvs.height = window.innerHeight; };
+                window.addEventListener('resize', resize); resize();
+
+                return () => { cancelAnimationFrame(reqId); window.removeEventListener('resize', resize); };
+            }, []);
+
+            // 倒數與勝負邏輯
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    setTime(t => {
+                        if (t <= 1) { clearInterval(timer); checkWin(); return 0; }
+                        return t - 1;
+                    });
+                }, 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                if (score.A >= 3 || score.B >= 3) checkWin();
+            }, [score]);
+
+            const checkWin = () => {
+                if (score.A > score.B) onEnd({ win: true, draw: false });
+                else if (score.B > score.A) onEnd({ win: false, draw: false });
+                else onEnd({ win: false, draw: true });
+            };
+
+            return (
+                <div class="fixed inset-0 bg-slate-900 z-50 overflow-hidden touch-none select-none">
+                    <div class="absolute top-0 w-full flex justify-between p-2 pointer-events-none z-10">
+                        <div class="arcade-font text-yellow-400 text-xl drop-shadow-md">Snow</div>
+                        <div class="text-white font-bold bg-slate-800/50 px-4 py-1 rounded">
+                            <span class="text-blue-400">{score.A}</span> : <span class="text-red-400">{score.B}</span> | ⏱️ {Math.floor(time/60)}:{String(time%60).padStart(2,'0')}
+                        </div>
+                        <button onClick={()=>onEnd({win:false, draw:false})} class="bg-red-600 px-3 py-1 rounded text-white text-xs pointer-events-auto">退出</button>
+                    </div>
+
+                    <canvas ref={canvasRef} class="block w-full h-full"></canvas>
+
+                    {/* 手機版觸控搖桿 */}
+                    <div class="md:hidden joystick-zone" ref={joyRef} onTouchStart={touchMove} onTouchMove={touchMove} onTouchEnd={touchEnd}>
+                        <div class="joystick-knob" style={{ transform: `translate(${joyPos.x}px, ${joyPos.y}px)` }}></div>
+                    </div>
+
+                    {/* 動作按鈕 */}
+                    <div class="absolute bottom-10 right-10 flex gap-4">
+                        <button onTouchStart={()=>{ state.current.keys[' '] = true; }} onTouchEnd={()=>{ state.current.keys[' '] = false; }} onMouseDown={()=>{ state.current.keys[' '] = true; }} onMouseUp={()=>{ state.current.keys[' '] = false; }} class="w-20 h-20 rounded-full bg-slate-700/80 border-2 border-slate-500 text-white font-bold active:bg-slate-600 shadow-lg select-none">防禦<br/>(Space)</button>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
